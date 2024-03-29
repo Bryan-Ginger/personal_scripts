@@ -1,0 +1,92 @@
+#!/usr/bin/env ruby
+
+require 'bundler/inline'
+
+gemfile do
+  source 'https://rubygems.org'
+  gem 'thor'
+end
+
+class Work < Thor
+  include Thor::Actions
+
+  desc "start", "Start work by checking jira and answering questions"
+  def start
+    invoke :get_work
+
+    inside File.join(ENV["ZENDESK_CODE_DIR"], project) do
+      if yes? "New branch? (currently: #{current_branch})"
+        invoke :newbranch
+      end
+
+      invoke :run_tests
+    end
+  end
+
+  desc "get_work", "Open Jira to get a task"
+  def get_work
+    open_jira
+
+    if no? "Do you understand the Acceptance Criteria?"
+      slack_for_AC_details
+    end
+  end
+
+  desc "newbranch", "Update the default branch and create a new branch off of it"
+  def newbranch
+    update_default_branch
+    create_branch
+  end
+
+  desc "test", "Run rspec if the working directory has a spec folder"
+  def run_tests
+    system "bundle; bundle exec rspec" if tests_detected?
+  end
+
+  private
+
+  def open_jira
+    system "/Applications/Firefox.app/Contents/MacOS/firefox", "https://zendesk.atlassian.net/jira/software/c/projects/SUP/boards/1675?assignee=614a5da347a8b5006f7f4304", "&"
+  end
+
+  def project
+    ask("which project?", limited_to: `ls $ZENDESK_CODE_DIR`.split + ["quit"]).tap { |p| abort if p == "quit" }
+  end
+
+  def current_branch
+    `git branch --show-current`.strip
+  end
+
+  def update_default_branch
+    if current_branch == default_branch
+      `git pull`
+    else
+      `git fetch origin #{default_branch}:#{default_branch}`
+    end
+  end
+
+  def create_branch
+    `git switch -c #{new_branch} #{default_branch}`
+  end
+
+  def new_branch
+    issue = ask "Whats the Jira issue number?"
+    description = ask("Describe what will be delivered:").gsub("\s", "_").downcase
+
+    "#{ENV["USER"]}/#{issue}_#{description}"
+  end
+
+  def default_branch
+    @default_branch ||= `git config --get init.defaultbranch`.strip
+  end
+
+  def tests_detected?
+    Dir.exist? "spec"
+  end
+
+  def slack_for_AC_details
+    say "Ask in slack for clarification"
+  end
+end
+
+Work.start(ARGV)
